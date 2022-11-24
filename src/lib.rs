@@ -1,59 +1,59 @@
-//! A small gif parser primarily for embedded, no-std environments but usable anywhere.
+//! A small and opinionated gif decoder, primarily for embedded, no-std environments but usable anywhere.
 //!
-//! This crate is primarily targeted at drawing BMP images to [`embedded_graphics`] [`DrawTarget`]s,
+//! This crate is primarily targeted at drawing GIF frames to [`embedded_graphics`] [`DrawTarget`]s,
+//!# Minimum supported Rust version
+//!
+//! The minimum supported Rust version for tinygif is nightly `1.67` or greater. Ensure you have the correct
+//! version of Rust installed, preferably through <https://rustup.rs>. This dependency on nightly
+//! rust isn't of vital importance; if you'd like to use this library with stable rust, please file
+//! an issue
+//!
+//! <!-- README-LINKS
+//! [`embedded_graphics`]: https://docs.rs/embedded_graphics
+//! [`DrawTarget`]: https://docs.rs/embedded-graphics/latest/embedded_graphics/draw_target/trait.DrawTarget.html
+//! [`Image`]: https://docs.rs/embedded-graphics/latest/embedded_graphics/image/struct.Image.html
+//! README-LINKS -->
+//!
+//! [`DrawTarget`]: embedded_graphics::draw_target::DrawTarget
+//! [`Image`]: embedded_graphics::image::Image
+//! [color types]: embedded_graphics::pixelcolor#structs
+//! [header information]: RawBmp::header
+//! [color table]: RawBmp::color_table
+//! [
+//!
 
-#![deny(missing_docs)]
+//#![deny(missing_docs)]
 #![feature(iter_next_chunk)]
 #![feature(iter_advance_by)]
-
-use core::marker::PhantomData;
-
-use frame::Frame;
-
-use embedded_graphics::{
-    pixelcolor::{
-        raw::{RawU1, RawU16, RawU24, RawU32, RawU4, RawU8},
-        Rgb555, Rgb565, Rgb888,
-    },
-    prelude::*,
-    primitives::Rectangle,
-};
+#![cfg_attr(not(test), no_std)]
+use embedded_graphics::{pixelcolor::Rgb565, prelude::*, primitives::Rectangle};
+pub use iterators::SeekableIter;
 
 mod common;
 mod frame;
 mod header;
+mod iterators;
 mod parser;
+#[cfg(test)]
+mod test_utils;
 
-///Gif public API
-pub struct Gif<'a, C> {
-    raw_gif: RawGif<'a>,
-    color_type: PhantomData<C>,
-}
+pub use frame::{GifFrame, GifFrameStreamer};
 
-/// Some gif frame idk
-pub struct GifFrame<'a, C> {
-    frame: Frame<'a>,
-    color_type: PhantomData<C>,
-}
-
-impl<C> ImageDrawable for GifFrame<'_, C>
+impl<S> ImageDrawable for GifFrameStreamer<S>
 where
-    C: PixelColor + From<Rgb555> + From<Rgb565> + From<Rgb888>,
+    S: SeekableIter,
 {
-    type Color = C;
-
+    type Color = Rgb565;
     fn draw<D>(&self, target: &mut D) -> Result<(), D::Error>
     where
-        D: DrawTarget<Color = C>,
+        D: DrawTarget<Color = Rgb565>,
     {
-        let area = self.bounding_box();
-
-        todo!();
-        let pixels = [];
-        target.fill_contiguous(&area, pixels);
+        let frame = self.current_frame().unwrap();
+        let area = frame.frame_area();
+        target.fill_contiguous(&area, frame)
     }
 
-    fn draw_sub_image<D>(&self, target: &mut D, area: &Rectangle) -> Result<(), D::Error>
+    fn draw_sub_image<D>(&self, _target: &mut D, _area: &Rectangle) -> Result<(), D::Error>
     where
         D: DrawTarget<Color = Self::Color>,
     {
@@ -61,29 +61,11 @@ where
     }
 }
 
-impl<C> OriginDimensions for GifFrame<'_, C>
+impl<S> OriginDimensions for GifFrameStreamer<S>
 where
-    C: PixelColor,
+    S: SeekableIter,
 {
     fn size(&self) -> Size {
-        todo!();
+        self.base_size()
     }
-}
-
-impl<'a, C> Gif<'a, C>
-where
-    C: PixelColor + From<Rgb555> + From<Rgb565> + From<Rgb888>,
-{
-    /// Creates a gif object from a byte slice.
-    ///
-    /// The created object keeps a shared reference to the input and does not dynamically allocate
-    /// memory.
-    pub fn from_slice(bytes: &'a [u8]) -> Result<Self, ()> {
-        todo!()
-    }
-}
-
-/// Gif bytes sins etc
-pub struct RawGif<'a> {
-    paylaod: &'a [u8],
 }

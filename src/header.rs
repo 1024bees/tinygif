@@ -1,35 +1,35 @@
-use core::{
-    mem::size_of,
-    ops::{Add, BitAnd, Shr},
-    ptr::null,
-};
+use core::ops::{Add, BitAnd, Shr};
 
 use crate::common::{Block, ExtensionLabel, ParseError};
+use crate::iterators::ByteIterator;
+use embedded_graphics::pixelcolor::Rgb888;
+use embedded_graphics::primitives::Rectangle;
 use embedded_graphics::{pixelcolor::Rgb565, prelude::*};
 
-use smallvec::{smallvec, SmallVec};
+use crate::iterators::SeekableIter;
+
+use smallvec::SmallVec;
 pub struct GifInfo {
     header: Header,
     control_info: Option<GraphicsControl>,
-    image_block_locations: SmallVec<[usize; 128]>,
+    pub(crate) image_block_locations: SmallVec<[usize; 128]>,
 }
 
 impl GifInfo {
-    pub fn parser<S: Iterator<Item = u8>>(
-        raw_header: &mut ByteIterator<S>,
-    ) -> Result<Self, ParseError> {
+    pub fn parser<S: SeekableIter>(raw_header: &mut ByteIterator<S>) -> Result<Self, ParseError> {
         let header = Header::parser(raw_header)?;
         let mut image_block_locations: SmallVec<[usize; 128]> = SmallVec::new();
 
         let mut control_info = None;
         loop {
-            match raw_header.take_byte().map(|byte| Block::from_u8(byte))?? {
+            let block_id = raw_header.take_byte().map(|byte| Block::from_u8(byte))??;
+
+            match block_id {
                 Block::Image => {
-                    println!("Found an image at {}", raw_header.get_offset());
                     image_block_locations.push(raw_header.get_offset());
                     //TODO:make this one call
-                    LocalImageDescriptor::parser(raw_header)?;
-                    LocalImageDescriptor::maybe_parse_local_color_table(raw_header)?;
+                    let _ = LocalImageDescriptor::parser(raw_header)?;
+
                     skip_image_data(raw_header)?;
                 }
 
@@ -40,18 +40,10 @@ impl GifInfo {
                         .map(|byte| ExtensionLabel::from_u8(byte))??;
                     match extension {
                         ExtensionLabel::Graphics => {
-                            println!("Found a graphics extension at {}", raw_header.get_offset());
-
                             control_info = Some(GraphicsControl::parse(raw_header)?);
                         }
                         _ => {
-                            println!(
-                                "Ate some useless extension {:?} at {}",
-                                extension,
-                                raw_header.get_offset()
-                            );
-
-                            eat_extension(raw_header)?;
+                            eat_extension(extension, raw_header)?;
                         }
                     }
                 }
@@ -64,6 +56,23 @@ impl GifInfo {
             control_info,
         })
     }
+    /// Delay between showing each gif frame, in miliseconds
+    pub(crate) fn delay_time(&self) -> usize {
+        self.control_info
+            .as_ref()
+            .map(|val| val.delay_time.clone() as usize)
+            .unwrap_or(50)
+    }
+    pub(crate) fn num_images(&self) -> usize {
+        self.image_block_locations.len()
+    }
+
+    pub(crate) fn base_size(&self) -> Size {
+        self.header.image_size
+    }
+    pub(crate) fn global_table(&self) -> Option<&ColorTable> {
+        self.header.global_table.as_ref().map(|val| &val.table)
+    }
 }
 
 #[derive(Default)]
@@ -71,15 +80,39 @@ pub struct Header {
     /// Gif size in pixels.
     pub image_size: Size,
 
-    /// Global color table (if it exists)
+    /// Global color table,
     pub global_table: Option<GlobalColorTable>,
 }
 
+#[derive(Debug)]
 pub struct LocalImageDescriptor {
     origin: Point,
     size: Size,
     interlaced: bool,
-    color_table: *const ColorTable,
+    local_color_table: Option<ColorTable>,
+}
+
+impl LocalImageDescriptor {
+    ///Frame local [`ColorTable`], if it exists
+    pub(crate) fn color_table(&self) -> Option<&ColorTable> {
+        self.local_color_table.as_ref()
+    }
+    /// Total number of pixels in this frame
+    pub(crate) fn num_pixels(&self) -> usize {
+        (self.size.width * self.size.height) as usize
+    }
+
+    pub(crate) fn size(&self) -> Size {
+        self.size
+    }
+
+    pub(crate) fn origin(&self) -> Point {
+        self.origin
+    }
+    /// Area that the frame should be drawn to
+    pub(crate) fn bounding_box(&self) -> Rectangle {
+        Rectangle::new(self.origin, self.size)
+    }
 }
 
 #[derive(Default)]
@@ -89,8 +122,9 @@ pub struct GlobalColorTable {
     table: ColorTable,
 }
 
+#[derive(Debug)]
 pub struct ColorTable {
-    table: SmallVec<[Rgb565; 256]>,
+    pub(crate) table: SmallVec<[Rgb565; 256]>,
 }
 
 /// Process for displaying next image in the file
@@ -102,12 +136,13 @@ enum DisposalMethod {
     OverwriteWithPrev = 3,
 }
 
+#[derive(Debug)]
 pub struct GraphicsControl {
     /// Control byte
     ctrl: u8,
     ///table index for a transparent color
     transparent_idx: u8,
-    ///Delay time, in hundredths of a second
+    ///Delay time, in second
     delay_time: u16,
 }
 
@@ -120,63 +155,25 @@ impl Default for ColorTable {
 }
 
 impl ColorTable {
-    pub fn new<S: Iterator<Item = u8>>(
-        len: u16,
-        iter: &mut ByteIterator<S>,
-    ) -> Result<Self, ParseError> {
+    pub fn new<S: SeekableIter>(len: u16, iter: &mut ByteIterator<S>) -> Result<Self, ParseError> {
         let mut table = SmallVec::new();
 
-        for idx in 0..len {
+        for _idx in 0..len {
             let r = iter.take_byte()?;
             let g = iter.take_byte()?;
             let b = iter.take_byte()?;
-            table.push(Rgb565::new(r, g, b))
+            table.push(Rgb565::from(Rgb888::new(r, g, b)))
         }
-        println!("Done with Color Table init!");
+
         Ok(Self { table })
     }
 }
 
-pub struct ByteIterator<S: Iterator<Item = u8>>(S, usize);
-
-impl<S: Iterator<Item = u8>> ByteIterator<S> {
-    fn take_u16_le(&mut self) -> Result<u16, ParseError> {
-        self.1 += size_of::<u16>();
-        self.0
-            .next_chunk()
-            .map(|val| u16::from_le_bytes(val))
-            .map_err(|_| ParseError::UnepectedEOF)
-    }
-
-    fn take_byte(&mut self) -> Result<u8, ParseError> {
-        self.1 += size_of::<u8>();
-        let res = self.0.next().ok_or(ParseError::UnepectedEOF);
-
-        res
-    }
-
-    #[inline]
-    fn take_arr<const N: usize>(&mut self) -> Result<[u8; N], ParseError> {
-        self.1 += size_of::<[u8; N]>();
-        self.0.next_chunk().map_err(|_| ParseError::UnepectedEOF)
-    }
-    fn get_offset(&self) -> usize {
-        self.1
-    }
-
-    fn seek_by(&mut self, len: usize) -> Result<(), ParseError> {
-        self.1 += len;
-        self.0.advance_by(len).map_err(|_| ParseError::UnepectedEOF)
-    }
-}
-
 impl Header {
-    pub fn parser<S: Iterator<Item = u8>>(
-        raw_header: &mut ByteIterator<S>,
-    ) -> Result<Header, ParseError> {
+    pub fn parser<S: SeekableIter>(raw_header: &mut ByteIterator<S>) -> Result<Header, ParseError> {
         let name: [u8; 6] = raw_header.take_arr()?;
 
-        if (name.eq("GIF89a".as_bytes()) && name.eq("GIF87a".as_bytes())) {
+        if name.eq("GIF89a".as_bytes()) && name.eq("GIF87a".as_bytes()) {
             return Err(ParseError::BadGifFile);
         }
 
@@ -186,13 +183,13 @@ impl Header {
         let size = Size { width, height };
 
         let global_color_table_info = raw_header.take_byte()?;
-        let is_present = global_color_table_info.bitand(0x80).eq(&0x80);
+        let global_color_exists = global_color_table_info.bitand(0x80).eq(&0x80);
         //FIXME: WHY DO WE NEED THIS? WE RANDOMLY SKIP TO THE 14th BYTE (IDX 13) IN THE ANIMATED GIF LIB??
 
         raw_header.take_byte()?;
 
-        let global_table = if is_present {
-            let num_entries = (1 << (global_color_table_info.bitand(0x7).add(1)));
+        let global_table = if global_color_exists {
+            let num_entries = 1 << (global_color_table_info.bitand(0x7).add(1));
             let bits_per_pixel = global_color_table_info.bitand(0x70).shr(4) + 1 as u8;
             let background_color = raw_header.take_byte()?;
             let table = ColorTable::new(num_entries, raw_header)?;
@@ -212,7 +209,7 @@ impl Header {
 }
 
 impl LocalImageDescriptor {
-    pub fn parser<S: Iterator<Item = u8>>(
+    pub fn parser<S: SeekableIter>(
         raw_header: &mut ByteIterator<S>,
     ) -> Result<LocalImageDescriptor, ParseError> {
         let left = raw_header.take_u16_le()? as i32;
@@ -222,22 +219,24 @@ impl LocalImageDescriptor {
         let height = raw_header.take_u16_le()? as u32;
 
         let size = Size { width, height };
+        let local_color_table = Self::maybe_parse_local_color_table(raw_header)?;
 
         Ok(Self {
             origin,
             size,
             interlaced: false,
-            color_table: null(),
+            local_color_table,
         })
     }
-    pub fn maybe_parse_local_color_table<S: Iterator<Item = u8>>(
+    /// Helper for
+    fn maybe_parse_local_color_table<S: SeekableIter>(
         raw_header: &mut ByteIterator<S>,
     ) -> Result<Option<ColorTable>, ParseError> {
         let color_info = raw_header.take_byte()?;
-        let interlaced = color_info.bitand(0x2).eq(&0x2);
-        let has_local_table = color_info.bitand(0x1).eq(&0x1);
+        let interlaced = color_info.bitand(0x40).eq(&0x40);
+        let has_local_table = color_info.bitand(0x80).eq(&0x80);
         let local_table = if has_local_table {
-            let num_entries = 1 << (color_info.bitand(0x70).shr(4 as u8).add(1));
+            let num_entries = 1 << (color_info.bitand(0x07).add(1));
             Some(ColorTable::new(num_entries, raw_header)?)
         } else {
             None
@@ -247,16 +246,17 @@ impl LocalImageDescriptor {
 }
 
 impl GraphicsControl {
-    pub fn parse<S: Iterator<Item = u8>>(
-        raw_header: &mut ByteIterator<S>,
-    ) -> Result<Self, ParseError> {
-        let len = raw_header.take_byte()?;
+    pub fn parse<S: SeekableIter>(raw_header: &mut ByteIterator<S>) -> Result<Self, ParseError> {
+        let _len = raw_header.take_byte()?;
         //TODO: if len!= 4, throw error
         let ctrl = raw_header.take_byte()?;
 
         let delay_time = raw_header.take_u16_le()? * 10;
 
         let transparent_idx = raw_header.take_byte()?;
+
+        // We gotta take the 0 value block delimiter still! Wahoo
+        raw_header.take_byte()?;
 
         Ok(Self {
             delay_time,
@@ -265,51 +265,51 @@ impl GraphicsControl {
         })
     }
 
-    pub fn get_transparent_idx(&self) -> Option<u8> {
+    fn get_transparent_idx(&self) -> Option<u8> {
         self.ctrl.bitand(1).eq(&1).then_some(self.transparent_idx)
     }
-    pub fn disposal_method(&self) -> u8 {
+    fn disposal_method(&self) -> u8 {
         self.ctrl.shr(2 as u8).bitand(0x2)
     }
 }
 
-pub fn eat_extension<S: Iterator<Item = u8>>(
+fn eat_extension<S: SeekableIter>(
+    _extension: ExtensionLabel,
     raw_header: &mut ByteIterator<S>,
 ) -> Result<(), ParseError> {
     while let len_byte = raw_header.take_byte()? {
-        raw_header.seek_by(len_byte as usize)?;
-    }
-    let terminator = raw_header.take_byte()?;
-    assert_eq!(terminator, 0);
-    Ok(())
-}
-
-pub fn skip_image_data<S: Iterator<Item = u8>>(
-    raw_header: &mut ByteIterator<S>,
-) -> Result<(), ParseError> {
-    while let val = raw_header.take_byte()? {
-        match val {
+        match len_byte {
             0 => return Ok(()),
-            _ => raw_header.seek_by(val as usize)?,
+            len_byte => raw_header.seek_by(len_byte as usize)?,
         }
     }
     Ok(())
 }
 
+/// Quick shim
+fn skip_image_data<S: SeekableIter>(raw_header: &mut ByteIterator<S>) -> Result<(), ParseError> {
+    let _code_size = raw_header.take_byte()?;
+    while let val = raw_header.take_byte()? {
+        match val {
+            0 => break,
+            _ => raw_header.seek_by(val as usize)?,
+        }
+    }
+
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
-    use std::io::Cursor;
 
     use super::*;
 
     #[test]
     fn sanity() {
         let crab = include_bytes!("test/crab.gif");
-        let golden = gif::DecodeOptions::new();
-        let cursor = Cursor::new(crab);
-        let dec2 = golden.read_info(cursor).unwrap();
-        let pal = dec2.global_palette().unwrap();
-        let mut iter = ByteIterator(crab.into_iter().cloned(), 0);
+        let mut iter = ByteIterator::from_slice(crab);
         let gif_info = GifInfo::parser(&mut iter).unwrap();
+        assert_eq!(gif_info.image_block_locations.len(), 60);
+        assert_eq!(gif_info.control_info.as_ref().unwrap().delay_time, 90)
     }
 }
