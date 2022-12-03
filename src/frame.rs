@@ -39,16 +39,16 @@ impl<S: SeekableIter> GifFrameStreamer<S> {
     }
 }
 
-struct LilQ {
-    buf: [u8; 255],
+struct LilQ<const SIZE: usize> {
+    buf: [u8; SIZE],
     idx: usize,
     size: usize,
 }
 
-impl LilQ {
+impl<const SIZE: usize> LilQ<SIZE> {
     fn new() -> Self {
         Self {
-            buf: [0; 255],
+            buf: [0; SIZE],
             idx: 0,
             size: 0,
         }
@@ -180,21 +180,9 @@ pub struct GifFrame<'header, S: SeekableIter> {
     image_descriptor: &'header LocalImageDescriptor,
     decoder: Decoder,
     /// Buffer that we write sub-blocks into
-    block_buffer: LilQ,
+    block_buffer: LilQ<255>,
     /// Buffer that we decode the LZW stream into
-    decode_buffer: LilQ,
-    pub(crate) state: DecodeState,
-}
-
-pub struct GifFramePixelIter<'header, S: SeekableIter> {
-    bytes: ByteIterator<S>,
-    color_table: &'header ColorTable,
-    image_descriptor: &'header LocalImageDescriptor,
-    decoder: Decoder,
-    /// Buffer that we write sub-blocks into
-    block_buffer: LilQ,
-    /// Buffer that we decode the LZW stream into
-    decode_buffer: LilQ,
+    decode_buffer: LilQ<1024>,
     pub(crate) state: DecodeState,
 }
 
