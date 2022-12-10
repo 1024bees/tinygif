@@ -1,5 +1,6 @@
 use criterion::{criterion_group, criterion_main, Criterion};
 use embedded_graphics::{image::Image, pixelcolor::Rgb565, prelude::*};
+mod perf;
 
 use tinygif::GifFrameStreamer;
 
@@ -85,5 +86,5 @@ fn parser_benchmarks(c: &mut Criterion) {
     });
 }
 
-criterion_group!(benches, parser_benchmarks);
+criterion_group!(name = benches; config = Criterion::default().with_profiler(perf::FlamegraphProfiler::new(10000)); targets = parser_benchmarks);
 criterion_main!(benches);
