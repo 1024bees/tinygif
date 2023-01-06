@@ -50,12 +50,7 @@ where
     {
         let frame = self.current_frame().unwrap();
         let area = frame.frame_area();
-
-        target.draw_iter(
-            area.points()
-                .zip(frame)
-                .map(|(pos, color)| Pixel(pos, color)),
-        )
+        target.fill_contiguous(&area, frame)
     }
 
     fn draw_sub_image<D>(&self, _target: &mut D, _area: &Rectangle) -> Result<(), D::Error>

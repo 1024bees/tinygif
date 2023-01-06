@@ -268,9 +268,6 @@ where
                 match out.status.unwrap() {
                     LzwStatus::NoProgress | LzwStatus::Done => self.state = DecodeState::BlockDone,
                     LzwStatus::Ok => {
-                        if consumed_in == 0 && consumed_out == 0 {
-                            panic!("ooooooh noo");
-                        }
                         self.state = DecodeState::ProcessingSubBlock;
                     }
                 }
