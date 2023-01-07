@@ -1,7 +1,7 @@
 //! A small and opinionated gif decoder, primarily for embedded, no-std environments but usable anywhere.
 //!
 //! This crate is primarily targeted at drawing GIF frames to [`embedded_graphics`] [`DrawTarget`]s,
-//!
+//!# Minimum supported Rust version
 //!
 //! The minimum supported Rust version for tinygif is nightly `1.67` or greater. Ensure you have the correct
 //! version of Rust installed, preferably through <https://rustup.rs>. This dependency on nightly
