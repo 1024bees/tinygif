@@ -1,3 +1,5 @@
+use core::mem::MaybeUninit;
+
 use embedded_graphics::{
     pixelcolor::Rgb565,
     prelude::{Point, Size},
@@ -39,16 +41,16 @@ impl<S: SeekableIter> GifFrameStreamer<S> {
     }
 }
 
-struct LilQ<const SIZE: usize> {
-    buf: [u8; SIZE],
+struct LilQ<T, const SIZE: usize> {
+    buf: [T; SIZE],
     idx: usize,
     size: usize,
 }
 
-impl<const SIZE: usize> LilQ<SIZE> {
+impl<T: Copy + Default, const SIZE: usize> LilQ<T, SIZE> {
     fn new() -> Self {
         Self {
-            buf: [0; SIZE],
+            buf: [T::default(); SIZE],
             idx: 0,
             size: 0,
         }
@@ -59,15 +61,15 @@ impl<const SIZE: usize> LilQ<SIZE> {
         self.idx >= self.size
     }
 
-    fn next(&mut self) -> Option<u8> {
+    fn next(&mut self) -> Option<T> {
         (!self.empty()).then(|| {
-            let rv: u8 = self.buf[self.idx as usize];
+            let rv: T = self.buf[self.idx as usize];
             self.idx += 1;
             rv
         })
     }
 
-    fn live_slice(&mut self) -> &mut [u8] {
+    fn live_slice(&mut self) -> &mut [T] {
         &mut self.buf[(self.idx as usize)..(self.size as usize)]
     }
 
@@ -180,9 +182,9 @@ pub struct GifFrame<'header, S: SeekableIter> {
     image_descriptor: &'header LocalImageDescriptor,
     decoder: Decoder,
     /// Buffer that we write sub-blocks into
-    block_buffer: LilQ<255>,
+    block_buffer: LilQ<u8, 255>,
     /// Buffer that we decode the LZW stream into
-    decode_buffer: LilQ<1024>,
+    color_buffer: LilQ<Rgb565, 512>,
     pub(crate) state: DecodeState,
 }
 
@@ -201,7 +203,7 @@ where
             color_table,
             image_descriptor,
             decoder: Decoder::new(BitOrder::Lsb, code_size),
-            decode_buffer: LilQ::new(),
+            color_buffer: LilQ::new(),
             block_buffer: LilQ::new(),
             state: DecodeState::NewSubBlock,
         }
@@ -241,10 +243,10 @@ where
         Ok(())
     }
 
-    fn fill_decode_buffer(&mut self) {
+    fn fill_color_buffer(&mut self) {
         if !self.done() {
-            self.decode_buffer.reset();
-            while self.decode_buffer.empty() {
+            self.color_buffer.reset();
+            while self.color_buffer.empty() {
                 match self.state {
                     DecodeState::NewSubBlock => {
                         self.fill_block_buffer().unwrap();
@@ -259,10 +261,11 @@ where
                     _ => {}
                 }
 
-                let out = self.decoder.decode_bytes(
-                    self.block_buffer.live_slice(),
-                    &mut self.decode_buffer.buf[..],
-                );
+                let mut out_bytes: [u8; 256] = unsafe { MaybeUninit::uninit().assume_init() };
+
+                let out = self
+                    .decoder
+                    .decode_bytes(self.block_buffer.live_slice(), &mut out_bytes);
 
                 let (consumed_in, consumed_out) = (out.consumed_in, out.consumed_out);
                 match out.status.unwrap() {
@@ -272,7 +275,11 @@ where
                     }
                 }
 
-                self.decode_buffer.size = consumed_out;
+                for idx in 0..consumed_out {
+                    self.color_buffer.buf[idx] = self.color_table.table[out_bytes[idx] as usize];
+                }
+
+                self.color_buffer.size = consumed_out;
                 self.block_buffer.idx += consumed_in;
             }
         }
@@ -287,11 +294,10 @@ impl<S: SeekableIter> Iterator for GifFrame<'_, S> {
     ///TODO: Suppport other colors
     type Item = Rgb565;
     fn next(&mut self) -> Option<Self::Item> {
-        if self.decode_buffer.empty() {
-            self.fill_decode_buffer()
+        if self.color_buffer.empty() {
+            self.fill_color_buffer()
         }
-        let val = self.decode_buffer.next();
-        val.map(|idx| self.color_table.table[idx as usize])
+        self.color_buffer.next()
     }
 }
 

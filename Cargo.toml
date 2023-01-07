@@ -16,6 +16,10 @@ exclude = [
 ]
 
 
+
+
+[lib]
+bench = false
 #[[bench]]
 #name = "parse"
 #harness = false
@@ -32,7 +36,7 @@ weezl = {version = "0.1.7", features = []}
 [dev-dependencies]
 embedded-graphics-simulator = "0.3.0"
 gif = "0.11.4"
-criterion = "0.3.5"
+criterion = "0.4.0"
 clap = { version = "3.1.6", features = ["derive"] }
 pprof = { version = "0.11", features = ["flamegraph"] }
 
