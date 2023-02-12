@@ -3,7 +3,8 @@ use embedded_graphics::{
     prelude::{Point, Size},
     primitives::Rectangle,
 };
-use weezl::{decode::Decoder, BitOrder, LzwStatus};
+
+use giflzw::{Decoder, LzwStatus};
 
 use crate::{
     common::ParseError,
@@ -200,7 +201,8 @@ where
             bytes,
             color_table,
             image_descriptor,
-            decoder: Decoder::new(BitOrder::Lsb, code_size),
+            //decoder: Decoder::new(weezl::BitOrder::Lsb, code_size),
+            decoder: Decoder::new(code_size),
             decode_buffer: LilQ::new(),
             block_buffer: LilQ::new(),
             state: DecodeState::NewSubBlock,
@@ -228,6 +230,7 @@ where
 
     fn fill_block_buffer(&mut self) -> Result<(), ParseError> {
         self.block_buffer.reset();
+
         let num_bytes = self.bytes.take_byte()?;
         if num_bytes == 0 {
             self.state = DecodeState::FrameDone;
@@ -265,11 +268,19 @@ where
                 );
 
                 let (consumed_in, consumed_out) = (out.consumed_in, out.consumed_out);
+
                 match out.status.unwrap() {
-                    LzwStatus::NoProgress | LzwStatus::Done => self.state = DecodeState::BlockDone,
+                    LzwStatus::NoProgress | LzwStatus::Done => {
+                        self.state = DecodeState::BlockDone;
+                    }
                     LzwStatus::Ok => {
                         self.state = DecodeState::ProcessingSubBlock;
                     }
+                }
+
+                #[cfg(test)]
+                {
+                    println!("consumed out is {}", consumed_out);
                 }
 
                 self.decode_buffer.size = consumed_out;
@@ -303,13 +314,17 @@ mod tests {
     use super::*;
     use crate::test_utils::Framebuffer;
     use std::{io::Cursor, vec::Vec};
-
+    //
     fn iterate_gif(bytes: &[u8]) {
         let mut gif = GifFrameStreamer::from_slice(bytes).unwrap();
-        for _ in 0..gif.header_info.num_images() {
+        for i in 0..gif.header_info.num_images() {
             let frame = gif.next_frame().unwrap();
             let num_pixels = frame.image_descriptor.num_pixels();
             let pixels: Vec<Rgb565> = frame.into_iter().collect();
+            dbg!(&pixels[0..5]);
+
+            dbg!(&pixels[pixels.len() - 5..]);
+            //panic!();
             assert_eq!(pixels.len(), num_pixels);
         }
     }
@@ -327,6 +342,7 @@ mod tests {
             let frame = frames.next_frame().unwrap();
             let num_pixels = frame.image_descriptor.num_pixels();
             let pixels: Vec<Rgb565> = frame.into_iter().collect();
+
             assert_eq!(pixels.len(), num_pixels);
         }
     }

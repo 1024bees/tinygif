@@ -27,7 +27,9 @@ harness = false
 [dependencies]
 embedded-graphics = "0.7"
 smallvec = "1.10.0"
-weezl = {version = "0.1.7", features = []}
+
+giflzw = { git = "https://github.com/1024bees/giflzw", branch="main"}
+
 
 [dev-dependencies]
 embedded-graphics-simulator = "0.3.0"
@@ -35,5 +37,6 @@ gif = "0.11.4"
 criterion = "0.3.5"
 clap = { version = "3.1.6", features = ["derive"] }
 pprof = { version = "0.11", features = ["flamegraph"] }
+weezl = {version = "0.1.7", features = []}
 
 
