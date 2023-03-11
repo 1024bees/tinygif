@@ -4,6 +4,8 @@ use embedded_graphics::{
     primitives::Rectangle,
 };
 
+use core::cell::{RefCell, RefMut};
+
 use giflzw::{Decoder, LzwStatus};
 
 use crate::{
@@ -15,6 +17,7 @@ use crate::{
 pub struct GifFrameStreamer<S: SeekableIter> {
     pub(crate) header_info: GifInfo,
     frame_offset: usize,
+    decoder: RefCell<Decoder>,
     local_image_descriptor: Option<LocalImageDescriptor>,
     bytes: ByteIterator<S>,
 }
@@ -88,6 +91,7 @@ impl<'iter> GifFrameStreamer<SeekableSliceIter<'iter>> {
 
         Ok(Self {
             bytes,
+            decoder: RefCell::new(Decoder::new(8)),
             frame_offset: 0,
             local_image_descriptor: None,
             header_info,
@@ -99,6 +103,7 @@ impl<S: SeekableIter> GifFrameStreamer<S> {
     pub fn new(header_info: GifInfo, bytes: ByteIterator<S>) -> Self {
         Self {
             bytes,
+            decoder: RefCell::new(Decoder::new(8)),
             frame_offset: 0,
             local_image_descriptor: None,
             header_info,
@@ -144,6 +149,7 @@ impl<S: SeekableIter> GifFrameStreamer<S> {
             self.bytes.clone(),
             color_table,
             self.local_image_descriptor.as_ref().unwrap(),
+            self.decoder.borrow_mut(),
         ))
     }
 
@@ -160,6 +166,7 @@ impl<S: SeekableIter> GifFrameStreamer<S> {
             self.bytes.clone(),
             color_table,
             self.local_image_descriptor.as_ref().unwrap(),
+            self.decoder.borrow_mut(),
         ))
     }
 }
@@ -179,7 +186,7 @@ pub struct GifFrame<'header, S: SeekableIter> {
     bytes: ByteIterator<S>,
     color_table: &'header ColorTable,
     image_descriptor: &'header LocalImageDescriptor,
-    decoder: Decoder,
+    decoder: RefMut<'header, Decoder>,
     /// Buffer that we write sub-blocks into
     block_buffer: LilQ<255>,
     /// Buffer that we decode the LZW stream into
@@ -195,14 +202,16 @@ where
         mut bytes: ByteIterator<S>,
         color_table: &'header ColorTable,
         image_descriptor: &'header LocalImageDescriptor,
+        mut decoder: RefMut<'header, Decoder>,
     ) -> Self {
         let code_size = bytes.take_byte().unwrap();
+        decoder.reset(code_size);
         Self {
             bytes,
             color_table,
             image_descriptor,
             //decoder: Decoder::new(weezl::BitOrder::Lsb, code_size),
-            decoder: Decoder::new(code_size),
+            decoder,
             decode_buffer: LilQ::new(),
             block_buffer: LilQ::new(),
             state: DecodeState::NewSubBlock,
