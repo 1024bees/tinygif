@@ -1,4 +1,4 @@
-use core::slice::Iter;
+use core::{slice::Iter, num::NonZeroUsize};
 ///Abstraction for iterating through an entire gif source
 #[derive(Clone)]
 pub struct ByteIterator<S: SeekableIter> {
@@ -10,7 +10,7 @@ use core::mem::size_of;
 
 pub trait SeekableIter: Iterator<Item = u8> + Clone {
     /// Goes to byte `offset` in the stream of iteration
-    fn seek(&mut self, offset: usize) -> Result<(), usize>;
+    fn seek(&mut self, offset: usize) -> Result<(), NonZeroUsize>;
 }
 
 impl<'a> Clone for SeekableSliceIter<'a> {
@@ -29,7 +29,7 @@ impl Iterator for SeekableSliceIter<'_> {
 }
 
 impl SeekableIter for SeekableSliceIter<'_> {
-    fn seek(&mut self, offset: usize) -> Result<(), usize> {
+    fn seek(&mut self, offset: usize) -> Result<(), NonZeroUsize> {
         self.1 = self.0.iter();
         self.1.advance_by(offset)
     }
