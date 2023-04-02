@@ -1,16 +1,20 @@
-use core::{slice::Iter, num::NonZeroUsize};
+use core::{mem::MaybeUninit, num::NonZeroUsize, slice::Iter};
 ///Abstraction for iterating through an entire gif source
 #[derive(Clone)]
 pub struct ByteIterator<S: SeekableIter> {
     iterator: S,
     offset: usize,
 }
+use smallvec::SmallVec;
+
 use crate::common::ParseError;
 use core::mem::size_of;
 
 pub trait SeekableIter: Iterator<Item = u8> + Clone {
-    /// Goes to byte `offset` in the stream of iteration
-    fn seek(&mut self, offset: usize) -> Result<(), NonZeroUsize>;
+    /// Goes to absolute byte `offset` in the stream of iteration
+    fn seek(&mut self, offset: usize) -> Result<(), usize>;
+    /// Moves forward by `len` bytes
+    fn move_by(&mut self, len: usize) -> Result<(), usize>;
 }
 
 impl<'a> Clone for SeekableSliceIter<'a> {
@@ -29,9 +33,21 @@ impl Iterator for SeekableSliceIter<'_> {
 }
 
 impl SeekableIter for SeekableSliceIter<'_> {
-    fn seek(&mut self, offset: usize) -> Result<(), NonZeroUsize> {
+    fn seek(&mut self, offset: usize) -> Result<(), usize> {
         self.1 = self.0.iter();
-        self.1.advance_by(offset)
+        self.move_by(offset)
+
+        //let mut lv = Some(0);
+        //for i in 0..offset {
+        //    lv = self.next();
+        //}
+        //lv.map(|_| ()).ok_or(offset.into())
+    }
+    fn move_by(&mut self, len: usize) -> Result<(), usize> {
+        for i in 0..len {
+            self.1.next().ok_or(i)?;
+        }
+        Ok(())
     }
 }
 
@@ -53,10 +69,11 @@ impl<'a> ByteIterator<SeekableSliceIter<'a>> {
 impl<S: SeekableIter> ByteIterator<S> {
     pub(crate) fn take_u16_le(&mut self) -> Result<u16, ParseError> {
         self.offset += size_of::<u16>();
-        self.iterator
-            .next_chunk()
-            .map(|val| u16::from_le_bytes(val))
-            .map_err(|_| ParseError::UnepectedEOF)
+        let mut holder: [u8; 2] = [0, 0];
+        holder[0] = self.iterator.next().ok_or(ParseError::UnepectedEOF)?;
+        holder[1] = self.iterator.next().ok_or(ParseError::UnepectedEOF)?;
+
+        Ok(u16::from_le_bytes(holder))
     }
 
     pub(crate) fn take_byte(&mut self) -> Result<u8, ParseError> {
@@ -69,9 +86,16 @@ impl<S: SeekableIter> ByteIterator<S> {
     #[inline]
     pub(crate) fn take_arr<const N: usize>(&mut self) -> Result<[u8; N], ParseError> {
         self.offset += size_of::<[u8; N]>();
-        self.iterator
-            .next_chunk()
-            .map_err(|_| ParseError::UnepectedEOF)
+
+        let mut rv: [u8; N] = unsafe { MaybeUninit::uninit().assume_init() };
+        for idx in 0..N {
+            rv[idx] = self.iterator.next().ok_or(ParseError::UnepectedEOF)?;
+        }
+        Ok(rv)
+
+        //self.iterator
+        //    .next_chunk()
+        //    .map_err(|_| ParseError::UnepectedEOF)
     }
     pub(crate) fn get_offset(&self) -> usize {
         self.offset
@@ -80,7 +104,7 @@ impl<S: SeekableIter> ByteIterator<S> {
     pub(crate) fn seek_by(&mut self, len: usize) -> Result<(), ParseError> {
         self.offset += len;
         self.iterator
-            .advance_by(len)
+            .move_by(len)
             .map_err(|_| ParseError::UnepectedEOF)
     }
 
@@ -93,7 +117,7 @@ impl<S: SeekableIter> ByteIterator<S> {
             let adv_offset = offset - self.offset;
             self.offset = offset;
             self.iterator
-                .advance_by(adv_offset)
+                .move_by(adv_offset)
                 .map_err(|_| ParseError::UnepectedEOF)
         }
     }

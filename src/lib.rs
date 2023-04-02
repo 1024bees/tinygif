@@ -23,8 +23,8 @@
 //!
 
 //#![deny(missing_docs)]
-#![feature(iter_next_chunk)]
-#![feature(iter_advance_by)]
+//#![feature(iter_next_chunk)]
+//#![feature(iter_advance_by)]
 #![cfg_attr(not(test), no_std)]
 use embedded_graphics::{pixelcolor::Rgb565, prelude::*, primitives::Rectangle};
 pub use iterators::SeekableIter;
