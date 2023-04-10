@@ -28,7 +28,8 @@ harness = false
 embedded-graphics = "0.7"
 smallvec = "1.10.0"
 
-giflzw = { git = "https://github.com/1024bees/giflzw", branch="main"}
+#giflzw = { git = "https://github.com/1024bees/giflzw", branch="main"}
+weezl = {version = "0.1.7", features = []}
 
 
 [dev-dependencies]
@@ -37,6 +38,5 @@ gif = "0.11.4"
 criterion = "0.3.5"
 clap = { version = "3.1.6", features = ["derive"] }
 pprof = { version = "0.11", features = ["flamegraph"] }
-weezl = {version = "0.1.7", features = []}
 
 
